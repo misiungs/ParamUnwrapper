@@ -122,6 +122,17 @@ public class XmlContentParser implements ContentParser {
         return result;
     }
 
+    @Override
+    public List<String> getKeyIdentifiers() {
+        // XML element/attribute rename is not supported in this implementation.
+        return Collections.emptyList();
+    }
+
+    @Override
+    public String withKeyRenamed(String identifier, String newKey) throws ParseException {
+        throw new ParseException("Key rename is not supported for XML content");
+    }
+
     // --- private helpers ---
 
     private void collectIdentifiers(Element element, String parentPath, List<String> out) {

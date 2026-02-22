@@ -33,9 +33,15 @@ public class UnwrapRule {
      *   <li>XML: simple dot-separated element path or {@code @attr} for attributes</li>
      *   <li>Form: parameter key names</li>
      * </ul>
-     * When empty, all discovered scalar leaf fields are exposed.
+     * When empty and {@link #profile} is also empty, all discovered scalar leaf fields are exposed.
      */
     private List<String> includeList;
+
+    /**
+     * Saved profile of candidate insertion points discovered via the "Parse" button.
+     * When non-empty this list takes precedence over {@link #includeList} and auto-discovery.
+     */
+    private List<CandidateEntry> profile;
 
     public UnwrapRule() {
         this.id = UUID.randomUUID().toString();
@@ -46,6 +52,7 @@ public class UnwrapRule {
         this.codecChain = new ArrayList<>();
         this.parserType = ParserType.JSON;
         this.includeList = new ArrayList<>();
+        this.profile = new ArrayList<>();
     }
 
     public UnwrapRule(String name) {
@@ -117,6 +124,14 @@ public class UnwrapRule {
 
     public void setIncludeList(List<String> includeList) {
         this.includeList = includeList;
+    }
+
+    public List<CandidateEntry> getProfile() {
+        return profile;
+    }
+
+    public void setProfile(List<CandidateEntry> profile) {
+        this.profile = profile;
     }
 
     @Override

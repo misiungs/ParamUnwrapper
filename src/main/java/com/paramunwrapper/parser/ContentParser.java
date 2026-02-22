@@ -54,4 +54,26 @@ public interface ContentParser {
      * Return a map of all field identifiers to their current values (for display purposes).
      */
     Map<String, String> getAllValues();
+
+    /**
+     * Return all field identifiers that correspond to renameable keys/names.
+     *
+     * <ul>
+     *   <li>JSON: JSON Pointer for each object key (same format as value identifiers)</li>
+     *   <li>Form: parameter key names</li>
+     *   <li>XML: empty list (key rename is not supported)</li>
+     * </ul>
+     */
+    List<String> getKeyIdentifiers();
+
+    /**
+     * Return a serialised string with the key at {@code identifier} renamed to
+     * {@code newKey} while preserving its value.
+     *
+     * @param identifier current key identifier (JSON Pointer for JSON, key name for form)
+     * @param newKey     replacement key name
+     * @return serialised content with the rename applied
+     * @throws ParseException if the identifier is invalid or rename fails
+     */
+    String withKeyRenamed(String identifier, String newKey) throws ParseException;
 }

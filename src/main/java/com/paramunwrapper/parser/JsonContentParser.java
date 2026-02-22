@@ -65,9 +65,9 @@ public class JsonContentParser implements ContentParser {
             JsonPointer parentPtr = ptr.head();
             String lastToken = ptr.last().getMatchingProperty();
 
-            JsonNode parent = (parentPtr == null || parentPtr.toString().isEmpty())
-                    ? copy
-                    : copy.at(parentPtr);
+            // JsonNode.at(emptyPointer) returns the node itself, so this handles both
+            // top-level fields (/key → parent is root) and nested fields (/a/b → parent is /a).
+            JsonNode parent = copy.at(parentPtr);
 
             if (parent == null || parent.isMissingNode()) {
                 throw new ParseException("Parent node not found for pointer: " + identifier);
@@ -103,6 +103,49 @@ public class JsonContentParser implements ContentParser {
         return result;
     }
 
+    @Override
+    public List<String> getKeyIdentifiers() {
+        if (root == null) return Collections.emptyList();
+        List<String> keys = new ArrayList<>();
+        collectObjectKeyPointers(root, "", keys);
+        return keys;
+    }
+
+    @Override
+    public String withKeyRenamed(String identifier, String newKey) throws ParseException {
+        if (root == null) {
+            throw new ParseException("JSON content has not been parsed");
+        }
+        try {
+            JsonNode copy = root.deepCopy();
+            JsonPointer ptr = JsonPointer.compile(identifier);
+            JsonPointer parentPtr = ptr.head();
+            String oldKey = ptr.last().getMatchingProperty();
+
+            // JsonNode.at(emptyPointer) returns the node itself, so no special-case needed.
+            JsonNode parent = copy.at(parentPtr);
+
+            if (parent == null || parent.isMissingNode()) {
+                throw new ParseException("Parent node not found for pointer: " + identifier);
+            }
+            if (!(parent instanceof ObjectNode objectNode)) {
+                throw new ParseException("Parent node is not an object for pointer: " + identifier);
+            }
+            JsonNode value = objectNode.get(oldKey);
+            if (value == null) {
+                throw new ParseException("Key not found: " + oldKey + " at " + identifier);
+            }
+            objectNode.remove(oldKey);
+            objectNode.set(newKey, value);
+            return MAPPER.writeValueAsString(copy);
+        } catch (ParseException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ParseException("Failed to rename JSON key at " + identifier + ": "
+                    + e.getMessage(), e);
+        }
+    }
+
     // --- private helpers ---
 
     private void collectLeafPointers(JsonNode node, String currentPath, List<String> out) {
@@ -129,5 +172,26 @@ public class JsonContentParser implements ContentParser {
      */
     private static String escapePointerToken(String token) {
         return token.replace("~", "~0").replace("/", "~1");
+    }
+
+    /**
+     * Collect JSON Pointer paths for every object key (recursively).
+     * Array indices are traversed but not themselves emitted as key identifiers.
+     */
+    private void collectObjectKeyPointers(JsonNode node, String currentPath, List<String> out) {
+        if (node == null) return;
+        if (node.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                String childPath = currentPath + "/" + escapePointerToken(entry.getKey());
+                out.add(childPath);
+                collectObjectKeyPointers(entry.getValue(), childPath, out);
+            }
+        } else if (node.isArray()) {
+            for (int i = 0; i < node.size(); i++) {
+                collectObjectKeyPointers(node.get(i), currentPath + "/" + i, out);
+            }
+        }
     }
 }

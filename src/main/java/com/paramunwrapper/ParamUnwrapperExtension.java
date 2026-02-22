@@ -6,6 +6,7 @@ import com.paramunwrapper.editor.UnwrapEditorProvider;
 import com.paramunwrapper.model.UnwrapRule;
 import com.paramunwrapper.persistence.PersistenceManager;
 import com.paramunwrapper.scanner.UnwrapInsertionPointProvider;
+import com.paramunwrapper.ui.ParamUnwrapperContextMenuProvider;
 import com.paramunwrapper.ui.RulesTab;
 
 import java.util.List;
@@ -46,6 +47,10 @@ public class ParamUnwrapperExtension implements BurpExtension {
 
         // Scanner insertion points
         api.scanner().registerInsertionPointProvider(insertionPointProvider);
+
+        // Context menu: "Send to Param Unwrapper"
+        api.userInterface().registerContextMenuItemsProvider(
+                new ParamUnwrapperContextMenuProvider(rulesTab));
 
         // Message editor tab
         api.userInterface().registerHttpRequestEditorProvider(
