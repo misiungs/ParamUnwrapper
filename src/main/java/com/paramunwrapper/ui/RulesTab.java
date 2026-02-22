@@ -6,6 +6,7 @@ import burp.api.montoya.ui.editor.HttpRequestEditor;
 import com.paramunwrapper.codec.CodecChain;
 import com.paramunwrapper.codec.CodecException;
 import com.paramunwrapper.model.CandidateEntry;
+import com.paramunwrapper.model.CandidateMergeUtils;
 import com.paramunwrapper.model.CandidateType;
 import com.paramunwrapper.model.UnwrapRule;
 import com.paramunwrapper.parser.ContentParser;
@@ -105,16 +106,24 @@ public class RulesTab extends JPanel {
 
         editorPanel = new RuleEditorPanel(this::onEditorChange);
 
-        // Parse + Save profile buttons
+        // Parse, Load list, Clear, Save profile buttons
         JButton parseBtn        = new JButton("Parse");
+        JButton loadListBtn     = new JButton("Load list");
+        JButton clearBtn        = new JButton("Clear");
         JButton saveProfileBtn  = new JButton("Save Profile");
         parseBtn.setToolTipText(
-                "Decode the request using the selected rule and discover candidate fields");
+                "Decode the request using the selected rule and merge discovered candidate fields");
+        loadListBtn.setToolTipText(
+                "Resolve the rule's include-list identifiers against the decoded request and merge them into candidates");
+        clearBtn.setToolTipText(
+                "Remove all entries from the candidates table");
         saveProfileBtn.setToolTipText(
                 "Save the checked candidates as the rule's profile for active scanning");
 
         JPanel parseButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         parseButtonPanel.add(parseBtn);
+        parseButtonPanel.add(loadListBtn);
+        parseButtonPanel.add(clearBtn);
         parseButtonPanel.add(saveProfileBtn);
 
         // Candidate table
@@ -193,6 +202,8 @@ public class RulesTab extends JPanel {
         });
 
         parseBtn.addActionListener(e -> runParse());
+        loadListBtn.addActionListener(e -> runLoadList());
+        clearBtn.addActionListener(e -> candidateTableModel.clearEntries());
         saveProfileBtn.addActionListener(e -> saveProfile());
 
         // Select first rule if present
@@ -255,12 +266,58 @@ public class RulesTab extends JPanel {
             return;
         }
 
+        DecodeResult result = decodeAndParse(rule);
+        if (result == null) return; // error already shown
+
+        List<CandidateEntry> discovered = discoverCandidates(result.decoded(), result.parser());
+        candidateTableModel.mergeEntries(discovered);
+    }
+
+    private void runLoadList() {
+        UnwrapRule rule = ruleList.getSelectedValue();
+        if (rule == null) {
+            JOptionPane.showMessageDialog(this, "Please select a rule first.",
+                    "No rule selected", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        List<String> includeList = rule.getIncludeList();
+        if (includeList == null || includeList.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "The selected rule has an empty include list.\n"
+                    + "Add identifiers in the rule editor to use this feature.",
+                    "Include list empty", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        DecodeResult result = decodeAndParse(rule);
+        if (result == null) return; // error already shown
+
+        List<CandidateEntry> resolved = new ArrayList<>();
+        for (String id : includeList) {
+            String val = result.parser().getValue(id);
+            if (val == null) continue; // identifier not found in decoded content - skip
+            addIfUnderLimit(resolved, new CandidateEntry(CandidateType.VALUE, id, val, true));
+            if (result.parser().getKeyIdentifiers().contains(id)) {
+                addIfUnderLimit(resolved, new CandidateEntry(CandidateType.KEY, id, val, true));
+            }
+        }
+        candidateTableModel.mergeEntries(resolved);
+    }
+
+    /**
+     * Shared helper: validate that a request is loaded, decode its container using
+     * {@code rule}'s codec chain, and return a {@link DecodeResult} with the decoded
+     * string and an already-parsed {@link ContentParser}.
+     * Shows an error dialog and returns {@code null} on any failure.
+     */
+    private DecodeResult decodeAndParse(UnwrapRule rule) {
         HttpRequest request = requestEditor.getRequest();
         if (request == null) {
             JOptionPane.showMessageDialog(this, "No request loaded in the editor.\n"
                     + "Use \"Send to Param Unwrapper\" from the context menu first.",
                     "No request", JOptionPane.WARNING_MESSAGE);
-            return;
+            return null;
         }
 
         try {
@@ -272,7 +329,7 @@ public class RulesTab extends JPanel {
                         "Container not found in the request.\n"
                         + "Check the rule's container source setting.",
                         "Container not found", JOptionPane.WARNING_MESSAGE);
-                return;
+                return null;
             }
 
             CodecChain chain = new CodecChain(rule.getCodecChain());
@@ -280,9 +337,7 @@ public class RulesTab extends JPanel {
 
             ContentParser parser = ContentParserFactory.create(rule.getParserType());
             parser.parse(decoded);
-
-            List<CandidateEntry> candidates = discoverCandidates(decoded, parser);
-            candidateTableModel.setEntries(candidates);
+            return new DecodeResult(decoded, parser);
 
         } catch (CodecException ex) {
             JOptionPane.showMessageDialog(this, "Codec error: " + ex.getMessage(),
@@ -291,10 +346,11 @@ public class RulesTab extends JPanel {
             JOptionPane.showMessageDialog(this, "Parse error: " + ex.getMessage(),
                     "Parse failed", JOptionPane.ERROR_MESSAGE);
         } catch (Exception ex) {
-            LOG.log(Level.WARNING, "Unexpected parse error", ex);
+            LOG.log(Level.WARNING, "Unexpected error during decode/parse", ex);
             JOptionPane.showMessageDialog(this, "Unexpected error: " + ex.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }
+        return null;
     }
 
     private List<CandidateEntry> discoverCandidates(String decoded, ContentParser parser) {
@@ -358,6 +414,9 @@ public class RulesTab extends JPanel {
 
     // ------------------------------------------------------------------ inner classes
 
+    /** Holds the result of decoding and parsing a container for a rule. */
+    private record DecodeResult(String decoded, ContentParser parser) {}
+
     /** Table model for the candidates / profile table. */
     private static class CandidateTableModel extends AbstractTableModel {
 
@@ -372,6 +431,20 @@ public class RulesTab extends JPanel {
         void setEntries(List<CandidateEntry> newEntries) {
             entries.clear();
             entries.addAll(newEntries);
+            fireTableDataChanged();
+        }
+
+        void mergeEntries(List<CandidateEntry> incoming) {
+            int sizeBefore = entries.size();
+            CandidateMergeUtils.mergeInto(entries, incoming);
+            if (entries.size() > sizeBefore) {
+                fireTableRowsInserted(sizeBefore, entries.size() - 1);
+            }
+        }
+
+        void clearEntries() {
+            if (entries.isEmpty()) return;
+            entries.clear();
             fireTableDataChanged();
         }
 
