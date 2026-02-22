@@ -18,7 +18,6 @@ import javax.swing.*;
 import javax.swing.border.TitledBorder;
 import javax.swing.table.AbstractTableModel;
 import java.awt.*;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
@@ -30,13 +29,12 @@ import java.util.logging.Logger;
  * <p>Layout (horizontal split):
  * <ul>
  *   <li>Left panel  – rules list, rule editor, Parse button, candidate table.</li>
- *   <li>Right panel – large HTTP request editor (editable) + raw-paste area.</li>
+ *   <li>Right panel – large HTTP request editor (editable).</li>
  * </ul>
  *
  * <p>Workflow:
  * <ol>
- *   <li>Load a request: either via "Send to Param Unwrapper" context menu or by pasting
- *       raw HTTP text in the "Paste" sub-panel and clicking "Load".</li>
+ *   <li>Load a request via "Send to Param Unwrapper" context menu.</li>
  *   <li>Select a rule on the left, configure it as needed.</li>
  *   <li>Click "Parse" to discover candidate insertion points.</li>
  *   <li>Review / adjust the candidates table (check/uncheck, add manual entries).</li>
@@ -80,12 +78,9 @@ public class RulesTab extends JPanel {
         // ------------------------------------------------------------------ right panel
         requestEditor = userInterface.createHttpRequestEditor();
 
-        JPanel pastePanel = buildPastePanel();
-
         JPanel rightPanel = new JPanel(new BorderLayout(0, 4));
         rightPanel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         rightPanel.add(requestEditor.uiComponent(), BorderLayout.CENTER);
-        rightPanel.add(pastePanel, BorderLayout.SOUTH);
 
         // ------------------------------------------------------------------ left panel
         listModel = new DefaultListModel<>();
@@ -213,8 +208,7 @@ public class RulesTab extends JPanel {
     // ------------------------------------------------------------------ public API
 
     /**
-     * Load a request into the right-side editor (called from the context menu provider
-     * and from "Load" in the paste panel).
+     * Load a request into the right-side editor (called from the context menu provider).
      */
     public void sendRequest(HttpRequest request) {
         SwingUtilities.invokeLater(() -> requestEditor.setRequest(request));
@@ -226,38 +220,6 @@ public class RulesTab extends JPanel {
     }
 
     // ------------------------------------------------------------------ private helpers
-
-    private JPanel buildPastePanel() {
-        JPanel panel = new JPanel(new BorderLayout(4, 0));
-        panel.setBorder(new TitledBorder("Paste raw request"));
-
-        JTextArea pasteArea = new JTextArea(4, 40);
-        pasteArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
-        pasteArea.setLineWrap(false);
-        pasteArea.setToolTipText(
-                "Paste a complete raw HTTP request then click Load");
-
-        JButton loadBtn = new JButton("Load");
-        loadBtn.addActionListener(e -> {
-            String text = pasteArea.getText().trim();
-            if (text.isEmpty()) return;
-            try {
-                HttpRequest req = HttpRequest.httpRequest(
-                        burp.api.montoya.core.ByteArray.byteArray(
-                                text.getBytes(StandardCharsets.ISO_8859_1)));
-                sendRequest(req);
-                pasteArea.setText("");
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this,
-                        "Could not parse raw request: " + ex.getMessage(),
-                        "Parse error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        panel.add(new JScrollPane(pasteArea), BorderLayout.CENTER);
-        panel.add(loadBtn, BorderLayout.EAST);
-        return panel;
-    }
 
     private JPanel buildAddEntryPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
@@ -296,7 +258,7 @@ public class RulesTab extends JPanel {
         HttpRequest request = requestEditor.getRequest();
         if (request == null) {
             JOptionPane.showMessageDialog(this, "No request loaded in the editor.\n"
-                    + "Use \"Send to Param Unwrapper\" or paste a raw request first.",
+                    + "Use \"Send to Param Unwrapper\" from the context menu first.",
                     "No request", JOptionPane.WARNING_MESSAGE);
             return;
         }

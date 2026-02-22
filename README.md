@@ -59,12 +59,8 @@ The tab is split horizontally:
 
 ### 2 – Load a request
 
-Two ways to populate the right-side request editor:
-
-* **Context menu** – right-click any request in Proxy history, Repeater, Logger, etc.
-  and choose **"Send to Param Unwrapper"**.
-* **Paste** – expand the "Paste raw request" area at the bottom of the right panel,
-  paste a complete raw HTTP request, and click **Load**.
+Populate the right-side request editor via the context menu: right-click any request
+in Proxy history, Repeater, Logger, etc. and choose **"Send to Param Unwrapper"**.
 
 ### 3 – Configure a rule
 
