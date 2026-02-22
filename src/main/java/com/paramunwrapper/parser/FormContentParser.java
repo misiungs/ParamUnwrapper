@@ -75,6 +75,31 @@ public class FormContentParser implements ContentParser {
         return fields == null ? Collections.emptyMap() : new LinkedHashMap<>(fields);
     }
 
+    @Override
+    public List<String> getKeyIdentifiers() {
+        return getFieldIdentifiers();
+    }
+
+    @Override
+    public String withKeyRenamed(String identifier, String newKey) throws ParseException {
+        if (fields == null) {
+            throw new ParseException("Form content has not been parsed");
+        }
+        if (!fields.containsKey(identifier)) {
+            throw new ParseException("Key not found: " + identifier);
+        }
+        // Rebuild map preserving insertion order, swapping the old key for newKey
+        LinkedHashMap<String, String> copy = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            if (entry.getKey().equals(identifier)) {
+                copy.put(newKey, entry.getValue());
+            } else {
+                copy.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return serialise(copy);
+    }
+
     // --- private helpers ---
 
     private static String urlDecode(String s) {

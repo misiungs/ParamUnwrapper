@@ -120,4 +120,68 @@ class JsonContentParserTest {
         assertTrue(ids.contains("/key"), "Should have insertion point for /key");
         assertTrue(ids.contains("/key2"), "Should have insertion point for /key2");
     }
+
+    // --- Key rename tests ---
+
+    @Test
+    void getKeyIdentifiersReturnsObjectKeys() throws ParseException {
+        JsonContentParser parser = new JsonContentParser();
+        parser.parse("{\"alpha\":\"v1\",\"beta\":\"v2\"}");
+
+        List<String> keys = parser.getKeyIdentifiers();
+        assertTrue(keys.contains("/alpha"), "Should contain /alpha");
+        assertTrue(keys.contains("/beta"),  "Should contain /beta");
+    }
+
+    @Test
+    void withKeyRenamedTopLevel() throws ParseException {
+        JsonContentParser parser = new JsonContentParser();
+        parser.parse("{\"key\":\"one\",\"key2\":\"two\"}");
+
+        String updated = parser.withKeyRenamed("/key", "renamedKey");
+
+        JsonContentParser verify = new JsonContentParser();
+        verify.parse(updated);
+
+        assertNull(verify.getValue("/key"),         "Old key should be gone");
+        assertEquals("one", verify.getValue("/renamedKey"), "New key should have original value");
+        assertEquals("two", verify.getValue("/key2"),       "Other key should be unchanged");
+    }
+
+    @Test
+    void withKeyRenamedNested() throws ParseException {
+        JsonContentParser parser = new JsonContentParser();
+        parser.parse("{\"parent\":{\"child\":\"deep\"}}");
+
+        String updated = parser.withKeyRenamed("/parent/child", "newChild");
+
+        JsonContentParser verify = new JsonContentParser();
+        verify.parse(updated);
+
+        assertNull(verify.getValue("/parent/child"),          "Old nested key should be gone");
+        assertEquals("deep", verify.getValue("/parent/newChild"), "New nested key should have value");
+    }
+
+    @Test
+    void withKeyRenamedPreservesNonScalarValue() throws ParseException {
+        JsonContentParser parser = new JsonContentParser();
+        parser.parse("{\"outer\":{\"inner\":42}}");
+
+        String updated = parser.withKeyRenamed("/outer", "renamed");
+
+        JsonContentParser verify = new JsonContentParser();
+        verify.parse(updated);
+
+        assertNull(verify.getValue("/outer/inner"),    "Old path should be gone");
+        assertEquals("42", verify.getValue("/renamed/inner"), "Value should survive under new key");
+    }
+
+    @Test
+    void withKeyRenamedMissingPointerThrows() throws ParseException {
+        JsonContentParser parser = new JsonContentParser();
+        parser.parse("{\"key\":\"value\"}");
+
+        assertThrows(ParseException.class,
+                () -> parser.withKeyRenamed("/nonexistent", "newKey"));
+    }
 }

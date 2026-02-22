@@ -1,8 +1,7 @@
 # Param Unwrapper
 
 A Burp Suite extension (Montoya API) that enables active scanning of nested or
-encoded parameters by decoding a user-configured container, exposing its inner
-fields as scanner insertion points, and re-encoding payloads back into the container.
+encoded parameters by providing an interactive **unwrap → discover → scan** workflow.
 
 ## Java version
 
@@ -46,37 +45,49 @@ mvn verify
 
 ---
 
-## Configuration
+## Usage workflow
 
-Open the **Param Unwrapper** suite tab.
+### 1 – Open the tab
 
-### Creating a rule
+Click **Param Unwrapper** in the Burp Suite tab bar.
 
-1. Click **Add** to create a new rule.
-2. Give it a descriptive **name**.
-3. Tick **Enabled** to activate it.
+The tab is split horizontally:
 
-### Container source
+| Left panel | Right panel |
+|---|---|
+| Rules list, rule editor, Parse button, Candidates table | Large HTTP request editor |
 
-Choose whether the container to decode is:
+### 2 – Load a request
 
-- **Burp parameter by name** — enter the query/body/cookie parameter name (e.g. `data`).
-- **Whole request body** — use the entire raw request body.
+Two ways to populate the right-side request editor:
 
-### Codec chain
+* **Context menu** – right-click any request in Proxy history, Repeater, Logger, etc.
+  and choose **"Send to Param Unwrapper"**.
+* **Paste** – expand the "Paste raw request" area at the bottom of the right panel,
+  paste a complete raw HTTP request, and click **Load**.
 
-Add codec steps in the order they should be applied during *decoding*:
+### 3 – Configure a rule
 
-| Step | Decode | Encode (inverse) |
-|------|--------|-----------------|
+1. Click **Add** on the left panel to create a new rule.
+2. Set a descriptive **name** and leave **Enabled** checked.
+
+#### Container source
+
+| Option | Description |
+|--------|-------------|
+| Burp parameter by name | A specific query/body/cookie parameter (e.g. `data`) |
+| Whole request body | The entire raw request body |
+
+#### Codec chain
+
+Add decoding steps (applied top-to-bottom on decode, reversed on re-encode):
+
+| Step | Decode | Re-encode (automatic, reversed) |
+|------|--------|----------------------------------|
 | `Base64 Decode` | Base64-decode | Base64-encode |
 | `URL Decode` | URL-decode | URL-encode |
 
-Encoding reverses the chain automatically (last step first).
-
-### Content type
-
-Select how the decoded content should be parsed:
+#### Content type
 
 | Type | Field identifiers |
 |------|-------------------|
@@ -84,10 +95,35 @@ Select how the decoded content should be parsed:
 | **XML** | Dot-separated path (e.g. `root.child`), or `root.child@attr` for attributes |
 | **x-www-form-urlencoded** | Key name (e.g. `username`) |
 
-### Include list
+### 4 – Parse and build a profile
 
-By default all discovered scalar leaf fields are exposed as insertion points.
-To restrict to specific fields, enter one identifier per line in the **Include list**.
+With a request loaded and a rule selected, click **Parse**.
+
+The extension:
+1. Extracts the container (parameter value or body).
+2. Decodes it via the codec chain.
+3. Parses the decoded content.
+4. Populates the **Candidates (profile)** table with up to 1,024 entries:
+
+| Candidate type | Description |
+|---|---|
+| **Value** | A scalar leaf field; payload replaces its value |
+| **Key rename** | An object/form key; payload becomes the new key name |
+| **Whole body** | The entire decoded container; payload replaces it entirely |
+
+Review the table:
+* Use the **✓ checkbox** to include/exclude individual candidates.
+* Edit an **Identifier** cell directly to adjust a JSON Pointer or form key.
+* Use **Add entry** to add a candidate manually.
+
+Click **Save Profile** to persist the selection. The scanner will use this profile
+for every subsequent active-scan request that matches the rule.
+
+### 5 – Active scanning
+
+After saving a profile, right-click a matching request and run an active scan.
+The scanner creates one insertion point per selected profile entry, applies the
+mutation, re-encodes, and sends the modified request.
 
 ---
 
@@ -112,21 +148,19 @@ Decoded Base64 value:
 | Container source | Burp parameter by name: `data` |
 | Codec chain | `Base64 Decode` |
 | Content type | JSON |
-| Include list | *(empty — expose all)* |
 
-Burp Scanner will now create two insertion points:
+After clicking **Parse**, the Candidates table shows:
 
-| Insertion point | Current value |
-|-----------------|---------------|
-| `My Rule → /key` | `one` |
-| `My Rule → /key2` | `two` |
+| ✓ | Type | Identifier | Current value |
+|---|------|------------|---------------|
+| ✓ | Whole body | `__body__` | `{"key":"one","key2":"two"}` |
+| ✓ | Value | `/key` | `one` |
+| ✓ | Value | `/key2` | `two` |
+| ✓ | Key rename | `/key` | `one` |
+| ✓ | Key rename | `/key2` | `two` |
 
-When the scanner injects a payload (e.g. `"><script>`) into `/key`, the extension:
-
-1. Base64-decodes `data` → `{"key":"one","key2":"two"}`
-2. Replaces `/key` → `{"key":"\"><script>","key2":"two"}`
-3. Base64-encodes the result
-4. Sends the request with the modified `data` parameter.
+After **Save Profile**, Burp Scanner creates five insertion points, each re-encoding
+the modified JSON back to Base64 and updating the `data` parameter.
 
 ---
 
@@ -147,7 +181,9 @@ When a request is displayed in an HTTP editor (Repeater, Proxy history, etc.) a
 com.paramunwrapper
 ├── ParamUnwrapperExtension     # BurpExtension entry point
 ├── model
-│   ├── UnwrapRule              # Rule configuration model
+│   ├── UnwrapRule              # Rule configuration model (includes saved profile)
+│   ├── CandidateEntry          # A single profile entry (type + identifier + selected)
+│   ├── CandidateType           # Enum: VALUE, KEY, WHOLE_BODY
 │   ├── CodecStepType           # Enum: URL_DECODE, URL_ENCODE, BASE64_DECODE, BASE64_ENCODE
 │   └── ParserType              # Enum: JSON, XML, FORM
 ├── codec
@@ -156,14 +192,14 @@ com.paramunwrapper
 │   ├── Base64Codec
 │   └── UrlCodec
 ├── parser
-│   ├── ContentParser           # Interface
+│   ├── ContentParser           # Interface (includes getKeyIdentifiers / withKeyRenamed)
 │   ├── ContentParserFactory
-│   ├── JsonContentParser       # JSON Pointer-based
-│   ├── XmlContentParser        # Simple dot-path + @attr
-│   └── FormContentParser       # URL-encoded form fields
+│   ├── JsonContentParser       # JSON Pointer-based; supports key rename
+│   ├── XmlContentParser        # Simple dot-path + @attr (value only)
+│   └── FormContentParser       # URL-encoded form fields; supports key rename
 ├── scanner
-│   ├── UnwrapInsertionPointProvider
-│   ├── UnwrapInsertionPoint
+│   ├── UnwrapInsertionPointProvider   # Profile-driven; falls back to auto-discovery
+│   ├── UnwrapInsertionPoint           # VALUE / KEY / WHOLE_BODY insertion point
 │   └── ContainerExtractor
 ├── editor
 │   ├── UnwrapEditorProvider
@@ -171,8 +207,9 @@ com.paramunwrapper
 ├── persistence
 │   └── PersistenceManager      # Montoya persistence API
 └── ui
-    ├── RulesTab                # Burp suite tab
-    └── RuleEditorPanel         # Rule editor form
+    ├── RulesTab                        # Suite tab: split layout with request editor
+    ├── RuleEditorPanel                 # Rule editor form
+    └── ParamUnwrapperContextMenuProvider  # "Send to Param Unwrapper" context menu
 ```
 
 ---
