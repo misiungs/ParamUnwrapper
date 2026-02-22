@@ -18,6 +18,8 @@ import com.paramunwrapper.scanner.ContainerExtractor;
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.TableCellEditor;
+import javax.swing.table.TableCellRenderer;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,9 +40,8 @@ import java.util.logging.Logger;
  *   <li>Load a request via "Send to Param Unwrapper" context menu.</li>
  *   <li>Select a rule on the left, configure it as needed.</li>
  *   <li>Click "Parse" to discover candidate insertion points.</li>
- *   <li>Review / adjust the candidates table (check/uncheck, add manual entries).</li>
- *   <li>Click "Save Profile" to persist the selection; the scanner will use this
- *       profile for future active-scan runs against matching requests.</li>
+ *   <li>Review / adjust the candidates table (check/uncheck, add/delete entries).</li>
+ *   <li>Changes to the insertion points table are auto-persisted immediately.</li>
  * </ol>
  */
 public class RulesTab extends JPanel {
@@ -106,25 +107,21 @@ public class RulesTab extends JPanel {
 
         editorPanel = new RuleEditorPanel(this::onEditorChange);
 
-        // Parse, Load list, Clear, Save profile buttons
-        JButton parseBtn        = new JButton("Parse");
+        // Load list, Parse, Clear buttons
         JButton loadListBtn     = new JButton("Load list");
+        JButton parseBtn        = new JButton("Parse");
         JButton clearBtn        = new JButton("Clear");
-        JButton saveProfileBtn  = new JButton("Save Profile");
-        parseBtn.setToolTipText(
-                "Decode the request using the selected rule and merge discovered candidate fields");
         loadListBtn.setToolTipText(
                 "Resolve the rule's include-list identifiers against the decoded request and merge them into candidates");
+        parseBtn.setToolTipText(
+                "Decode the request using the selected rule and merge discovered candidate fields");
         clearBtn.setToolTipText(
                 "Remove all entries from the candidates table");
-        saveProfileBtn.setToolTipText(
-                "Save the checked candidates as the rule's profile for active scanning");
 
         JPanel parseButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        parseButtonPanel.add(parseBtn);
         parseButtonPanel.add(loadListBtn);
+        parseButtonPanel.add(parseBtn);
         parseButtonPanel.add(clearBtn);
-        parseButtonPanel.add(saveProfileBtn);
 
         // Candidate table
         candidateTableModel = new CandidateTableModel();
@@ -135,11 +132,17 @@ public class RulesTab extends JPanel {
         candidateTable.getColumnModel().getColumn(1).setPreferredWidth(80);
         candidateTable.getColumnModel().getColumn(2).setPreferredWidth(180);
         candidateTable.getColumnModel().getColumn(3).setPreferredWidth(150);
+        candidateTable.getColumnModel().getColumn(4).setPreferredWidth(60);
+        candidateTable.getColumnModel().getColumn(4).setMaxWidth(70);
+        candidateTable.getColumnModel().getColumn(1).setCellEditor(
+                new DefaultCellEditor(new JComboBox<>(CandidateType.values())));
+        candidateTable.getColumnModel().getColumn(4).setCellRenderer(new DeleteButtonRenderer());
+        candidateTable.getColumnModel().getColumn(4).setCellEditor(new DeleteButtonEditor());
 
         JPanel addEntryPanel = buildAddEntryPanel();
 
         JPanel candidatesPanel = new JPanel(new BorderLayout(2, 2));
-        candidatesPanel.setBorder(new TitledBorder("Candidates (profile)"));
+        candidatesPanel.setBorder(new TitledBorder("Insertion points"));
         candidatesPanel.add(new JScrollPane(candidateTable), BorderLayout.CENTER);
         candidatesPanel.add(addEntryPanel, BorderLayout.SOUTH);
 
@@ -204,7 +207,6 @@ public class RulesTab extends JPanel {
         parseBtn.addActionListener(e -> runParse());
         loadListBtn.addActionListener(e -> runLoadList());
         clearBtn.addActionListener(e -> candidateTableModel.clearEntries());
-        saveProfileBtn.addActionListener(e -> saveProfile());
 
         // Select first rule if present
         if (!listModel.isEmpty()) {
@@ -214,6 +216,9 @@ public class RulesTab extends JPanel {
             candidateTableModel.setEntries(
                     first.getProfile() != null ? first.getProfile() : List.of());
         }
+
+        // Enable auto-save after initial population
+        candidateTableModel.setOnChangeCallback(this::autoSaveProfile);
     }
 
     // ------------------------------------------------------------------ public API
@@ -388,15 +393,11 @@ public class RulesTab extends JPanel {
         return true;
     }
 
-    private void saveProfile() {
+    private void autoSaveProfile() {
         UnwrapRule rule = ruleList.getSelectedValue();
         if (rule == null) return;
         rule.setProfile(new ArrayList<>(candidateTableModel.getEntries()));
         persistAndNotify();
-        JOptionPane.showMessageDialog(this,
-                "Profile saved (" + candidateTableModel.getRowCount() + " entries).\n"
-                + "The scanner will use this profile for matching requests.",
-                "Profile saved", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void onEditorChange() {
@@ -421,12 +422,18 @@ public class RulesTab extends JPanel {
     private static class CandidateTableModel extends AbstractTableModel {
 
         private static final String[] COLUMNS =
-                {"✓", "Type", "Identifier", "Current value"};
+                {"✓", "Type", "Identifier", "Current value", "Delete"};
         private static final int COL_SELECTED    = 0;
         private static final int COL_TYPE        = 1;
         private static final int COL_IDENTIFIER  = 2;
         private static final int COL_VALUE       = 3;
+        private static final int COL_DELETE      = 4;
         private final List<CandidateEntry> entries = new ArrayList<>();
+        private Runnable onChangeCallback;
+
+        void setOnChangeCallback(Runnable callback) {
+            this.onChangeCallback = callback;
+        }
 
         void setEntries(List<CandidateEntry> newEntries) {
             entries.clear();
@@ -440,17 +447,28 @@ public class RulesTab extends JPanel {
             if (entries.size() > sizeBefore) {
                 fireTableRowsInserted(sizeBefore, entries.size() - 1);
             }
+            notifyCallback();
         }
 
         void clearEntries() {
             if (entries.isEmpty()) return;
             entries.clear();
             fireTableDataChanged();
+            notifyCallback();
         }
 
         void addEntry(CandidateEntry entry) {
             entries.add(entry);
             fireTableRowsInserted(entries.size() - 1, entries.size() - 1);
+            notifyCallback();
+        }
+
+        void deleteEntry(int row) {
+            if (row >= 0 && row < entries.size()) {
+                entries.remove(row);
+                fireTableRowsDeleted(row, row);
+                notifyCallback();
+            }
         }
 
         List<CandidateEntry> getEntries() {
@@ -463,12 +481,15 @@ public class RulesTab extends JPanel {
 
         @Override
         public Class<?> getColumnClass(int col) {
-            return col == COL_SELECTED ? Boolean.class : String.class;
+            if (col == COL_SELECTED) return Boolean.class;
+            if (col == COL_TYPE) return CandidateType.class;
+            return String.class;
         }
 
         @Override
         public boolean isCellEditable(int row, int col) {
-            return col == COL_SELECTED || col == COL_IDENTIFIER;
+            return col == COL_SELECTED || col == COL_TYPE
+                    || col == COL_IDENTIFIER || col == COL_DELETE;
         }
 
         @Override
@@ -476,9 +497,10 @@ public class RulesTab extends JPanel {
             CandidateEntry e = entries.get(row);
             return switch (col) {
                 case COL_SELECTED   -> e.isSelected();
-                case COL_TYPE       -> e.getType() != null ? e.getType().getDisplayName() : "";
+                case COL_TYPE       -> e.getType() != null ? e.getType() : CandidateType.VALUE;
                 case COL_IDENTIFIER -> e.getIdentifier() != null ? e.getIdentifier() : "";
                 case COL_VALUE      -> e.getCurrentValue() != null ? e.getCurrentValue() : "";
+                case COL_DELETE     -> "Delete";
                 default -> "";
             };
         }
@@ -488,10 +510,19 @@ public class RulesTab extends JPanel {
             CandidateEntry e = entries.get(row);
             if (col == COL_SELECTED) {
                 e.setSelected(Boolean.TRUE.equals(value));
+                notifyCallback();
             } else if (col == COL_IDENTIFIER) {
                 e.setIdentifier(value != null ? value.toString() : "");
+                notifyCallback();
+            } else if (col == COL_TYPE && value instanceof CandidateType ct) {
+                e.setType(ct);
+                notifyCallback();
             }
             fireTableCellUpdated(row, col);
+        }
+
+        private void notifyCallback() {
+            if (onChangeCallback != null) onChangeCallback.run();
         }
     }
 
@@ -507,6 +538,48 @@ public class RulesTab extends JPanel {
                 setForeground(rule.isEnabled() ? list.getForeground() : Color.GRAY);
             }
             return this;
+        }
+    }
+
+    /** Cell renderer that displays a "Delete" button in each row of the candidates table. */
+    private static class DeleteButtonRenderer extends JButton implements TableCellRenderer {
+        DeleteButtonRenderer() {
+            setText("Delete");
+            setMargin(new Insets(0, 2, 0, 2));
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value,
+                boolean isSelected, boolean hasFocus, int row, int column) {
+            return this;
+        }
+    }
+
+    /** Cell editor that removes the corresponding row when the "Delete" button is clicked. */
+    private class DeleteButtonEditor extends AbstractCellEditor implements TableCellEditor {
+        private final JButton button;
+        private int currentRow = -1;
+
+        DeleteButtonEditor() {
+            button = new JButton("Delete");
+            button.setMargin(new Insets(0, 2, 0, 2));
+            button.addActionListener(e -> {
+                fireEditingStopped();
+                int rowToDelete = currentRow;
+                SwingUtilities.invokeLater(() -> candidateTableModel.deleteEntry(rowToDelete));
+            });
+        }
+
+        @Override
+        public Component getTableCellEditorComponent(JTable table, Object value,
+                boolean isSelected, int row, int column) {
+            currentRow = row;
+            return button;
+        }
+
+        @Override
+        public Object getCellEditorValue() {
+            return "Delete";
         }
     }
 }
