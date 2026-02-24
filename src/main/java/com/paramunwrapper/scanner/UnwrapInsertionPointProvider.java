@@ -8,6 +8,7 @@ import com.paramunwrapper.codec.CodecChain;
 import com.paramunwrapper.codec.CodecException;
 import com.paramunwrapper.model.CandidateEntry;
 import com.paramunwrapper.model.CandidateType;
+import com.paramunwrapper.model.ParserType;
 import com.paramunwrapper.model.UnwrapRule;
 import com.paramunwrapper.parser.ContentParser;
 import com.paramunwrapper.parser.ContentParserFactory;
@@ -15,8 +16,12 @@ import com.paramunwrapper.parser.ParseException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Provides scanner insertion points for requests that match enabled {@link UnwrapRule}s.
@@ -29,6 +34,9 @@ import java.util.logging.Logger;
 public class UnwrapInsertionPointProvider implements AuditInsertionPointProvider {
 
     private static final Logger LOG = Logger.getLogger(UnwrapInsertionPointProvider.class.getName());
+
+    /** Cache of compiled regex patterns keyed by pattern string to avoid repeated compilation. */
+    private static final Map<String, Pattern> PATTERN_CACHE = new ConcurrentHashMap<>();
 
     private final List<UnwrapRule> rules;
 
@@ -76,6 +84,10 @@ public class UnwrapInsertionPointProvider implements AuditInsertionPointProvider
         }
 
         // --- Auto-discovery / legacy include-list path ---
+        // Custom type requires a profile populated via "Load list"; auto-discovery not supported.
+        if (rule.getParserType() == ParserType.CUSTOM) {
+            return points;
+        }
         String decoded;
         try {
             decoded = chain.decode(rawContainer);
@@ -123,8 +135,10 @@ public class UnwrapInsertionPointProvider implements AuditInsertionPointProvider
         ContentParser parser = null;
         try {
             decoded = chain.decode(rawContainer);
-            parser = ContentParserFactory.create(rule.getParserType());
-            parser.parse(decoded);
+            if (rule.getParserType() != ParserType.CUSTOM) {
+                parser = ContentParserFactory.create(rule.getParserType());
+                parser.parse(decoded);
+            }
         } catch (CodecException | ParseException e) {
             LOG.log(Level.FINE,
                     "Profile path: decode/parse failed for rule ''{0}''; "
@@ -143,6 +157,22 @@ public class UnwrapInsertionPointProvider implements AuditInsertionPointProvider
 
                 if (type == CandidateType.WHOLE_BODY) {
                     currentValue = decoded != null ? decoded : "";
+                    points.add(new UnwrapInsertionPoint(
+                            rule, type, id, request, currentValue, extractor));
+                } else if (rule.getParserType() == ParserType.CUSTOM
+                        && decoded != null && id.startsWith("regex:")) {
+                    String patternStr = id.substring("regex:".length());
+                    Pattern compiled = PATTERN_CACHE.computeIfAbsent(patternStr, Pattern::compile);
+                    Matcher m = compiled.matcher(decoded);
+                    if (!m.find()) continue;
+                    try {
+                        currentValue = m.group("value");
+                    } catch (IllegalArgumentException ex) {
+                        LOG.log(Level.FINE, "Skipping custom entry ''{0}'': "
+                                + "no named group ''value'' in pattern", id);
+                        continue;
+                    }
+                    if (currentValue == null) continue;
                     points.add(new UnwrapInsertionPoint(
                             rule, type, id, request, currentValue, extractor));
                 } else if (parser != null) {

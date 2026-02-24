@@ -8,6 +8,7 @@ import com.paramunwrapper.codec.CodecException;
 import com.paramunwrapper.model.CandidateEntry;
 import com.paramunwrapper.model.CandidateMergeUtils;
 import com.paramunwrapper.model.CandidateType;
+import com.paramunwrapper.model.ParserType;
 import com.paramunwrapper.model.UnwrapRule;
 import com.paramunwrapper.parser.ContentParser;
 import com.paramunwrapper.parser.ContentParserFactory;
@@ -25,6 +26,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * The main "Param Unwrapper" Burp suite tab.
@@ -271,6 +275,14 @@ public class RulesTab extends JPanel {
             return;
         }
 
+        if (rule.getParserType() == ParserType.CUSTOM) {
+            JOptionPane.showMessageDialog(this,
+                    "The Custom content type does not support auto-discovery.\n"
+                    + "Add regex patterns to the Include list and use 'Load list' instead.",
+                    "Not supported for Custom", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
         DecodeResult result = decodeAndParse(rule);
         if (result == null) return; // error already shown
 
@@ -297,6 +309,35 @@ public class RulesTab extends JPanel {
 
         DecodeResult result = decodeAndParse(rule);
         if (result == null) return; // error already shown
+
+        if (rule.getParserType() == ParserType.CUSTOM) {
+            List<CandidateEntry> resolved = new ArrayList<>();
+            for (String pattern : includeList) {
+                try {
+                    Pattern compiled = Pattern.compile(pattern);
+                    Matcher m = compiled.matcher(result.decoded());
+                    if (!m.find()) continue;
+                    String captured;
+                    try {
+                        captured = m.group("value");
+                    } catch (IllegalArgumentException ex) {
+                        JOptionPane.showMessageDialog(this,
+                                "Regex does not contain named capture group (?<value>...): " + pattern,
+                                "Invalid regex", JOptionPane.WARNING_MESSAGE);
+                        continue;
+                    }
+                    if (captured == null) continue;
+                    String id = "regex:" + pattern;
+                    addIfUnderLimit(resolved, new CandidateEntry(CandidateType.VALUE, id, captured, true));
+                } catch (PatternSyntaxException ex) {
+                    JOptionPane.showMessageDialog(this,
+                            "Invalid regex pattern: " + pattern + "\n" + ex.getMessage(),
+                            "Invalid regex", JOptionPane.WARNING_MESSAGE);
+                }
+            }
+            candidateTableModel.mergeEntries(resolved);
+            return;
+        }
 
         List<CandidateEntry> resolved = new ArrayList<>();
         for (String id : includeList) {
@@ -339,6 +380,10 @@ public class RulesTab extends JPanel {
 
             CodecChain chain = new CodecChain(rule.getCodecChain());
             String decoded = chain.decode(rawContainer);
+
+            if (rule.getParserType() == ParserType.CUSTOM) {
+                return new DecodeResult(decoded, null);
+            }
 
             ContentParser parser = ContentParserFactory.create(rule.getParserType());
             parser.parse(decoded);

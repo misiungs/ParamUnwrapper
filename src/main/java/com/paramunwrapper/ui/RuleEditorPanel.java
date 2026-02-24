@@ -24,6 +24,7 @@ public class RuleEditorPanel extends JPanel {
     private final JList<CodecStepType> codecList;
     private final JComboBox<ParserType> parserTypeCombo;
     private final JTextArea includeListArea;
+    private javax.swing.border.TitledBorder includeListBorder;
 
     private UnwrapRule currentRule;
     private final Runnable onChangeCallback;
@@ -127,9 +128,10 @@ public class RuleEditorPanel extends JPanel {
 
         // Include list
         JPanel includePanel = new JPanel(new BorderLayout(3, 3));
-        includePanel.setBorder(new TitledBorder(
+        includeListBorder = new TitledBorder(
                 "Include list (one identifier per line; leave empty to expose all scalar fields)"
-                + " — JSON: /key or /nested/field  |  XML: path or path@attr  |  Form: key name"));
+                + " — JSON: /key or /nested/field  |  XML: path or path@attr  |  Form: key name");
+        includePanel.setBorder(includeListBorder);
         includeListArea = new JTextArea(4, 30);
         includeListArea.setLineWrap(false);
         includePanel.add(new JScrollPane(includeListArea), BorderLayout.CENTER);
@@ -140,7 +142,10 @@ public class RuleEditorPanel extends JPanel {
         // Wire save-on-change
         nameField.addActionListener(e -> notifyChange());
         enabledCheck.addActionListener(e -> notifyChange());
-        parserTypeCombo.addActionListener(e -> notifyChange());
+        parserTypeCombo.addActionListener(e -> {
+            updateIncludeListLabel((ParserType) parserTypeCombo.getSelectedItem());
+            notifyChange();
+        });
         includeListArea.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             public void insertUpdate(javax.swing.event.DocumentEvent e) { notifyChange(); }
             public void removeUpdate(javax.swing.event.DocumentEvent e) { notifyChange(); }
@@ -172,6 +177,7 @@ public class RuleEditorPanel extends JPanel {
         }
 
         parserTypeCombo.setSelectedItem(rule.getParserType());
+        updateIncludeListLabel(rule.getParserType());
 
         StringBuilder sb = new StringBuilder();
         if (rule.getIncludeList() != null) {
@@ -209,6 +215,19 @@ public class RuleEditorPanel extends JPanel {
 
     public UnwrapRule getCurrentRule() {
         return currentRule;
+    }
+
+    private void updateIncludeListLabel(ParserType parserType) {
+        if (parserType == ParserType.CUSTOM) {
+            includeListBorder.setTitle(
+                    "Include list (one Java regex per line; each must contain (?<value>...))");
+        } else {
+            includeListBorder.setTitle(
+                    "Include list (one identifier per line; leave empty to expose all scalar fields)"
+                    + " — JSON: /key or /nested/field  |  XML: path or path@attr  |  Form: key name");
+        }
+        // Repaint the border panel (parent of the text area)
+        includeListArea.getParent().repaint();
     }
 
     private void notifyChange() {
