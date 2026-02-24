@@ -3,7 +3,8 @@ package com.paramunwrapper.model;
 public enum ParserType {
     JSON("JSON"),
     XML("XML"),
-    FORM("x-www-form-urlencoded");
+    FORM("x-www-form-urlencoded"),
+    CUSTOM("Custom");
 
     private final String displayName;
 

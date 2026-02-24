@@ -14,6 +14,9 @@ public final class ContentParserFactory {
             case JSON -> new JsonContentParser();
             case XML -> new XmlContentParser();
             case FORM -> new FormContentParser();
+            case CUSTOM -> throw new IllegalArgumentException(
+                    "CUSTOM parser type does not use a ContentParser; "
+                    + "use regex patterns in the include list");
         };
     }
 }
