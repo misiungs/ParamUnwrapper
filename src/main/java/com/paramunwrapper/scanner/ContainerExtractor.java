@@ -1,10 +1,15 @@
 package com.paramunwrapper.scanner;
 
+import burp.api.montoya.core.ByteArray;
+import burp.api.montoya.core.Range;
+import burp.api.montoya.http.HttpService;
 import burp.api.montoya.http.message.params.HttpParameter;
 import burp.api.montoya.http.message.params.HttpParameterType;
 import burp.api.montoya.http.message.params.ParsedHttpParameter;
 import burp.api.montoya.http.message.requests.HttpRequest;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -21,6 +26,13 @@ import java.util.logging.Logger;
  *
  * <p>When multiple standard parameters share the same name the one with the highest-priority
  * type is used: BODY &gt; URL &gt; COOKIE.
+ *
+ * <p>For named parameters, {@link #buildRequestWithContainer} first attempts a raw-byte
+ * splice using {@link ParsedHttpParameter#valueOffsets()} and
+ * {@link HttpRequest#httpRequest(HttpService, ByteArray)}, which performs a truly surgical
+ * replacement and preserves all other request bytes (headers, other params, etc.) intact.
+ * If the raw-byte approach fails for any reason, it falls back to
+ * {@link HttpRequest#withUpdatedParameters}.
  */
 public class ContainerExtractor {
 
@@ -58,11 +70,20 @@ public class ContainerExtractor {
 
     /**
      * Return a new request with the container replaced by {@code newValue}.
+     *
+     * <p>For named parameters, first attempts a raw-byte splice using
+     * {@link ParsedHttpParameter#valueOffsets()} so that only the exact parameter value
+     * bytes are changed, preserving all other request content. Falls back to
+     * {@link HttpRequest#withUpdatedParameters} on any error.
      */
     public HttpRequest buildRequestWithContainer(HttpRequest request, String newValue) {
         if (useNamedParameter) {
             ParsedHttpParameter param = findParameter(request);
             if (param != null) {
+                // Preferred: surgical raw-byte replacement preserves all other request content
+                HttpRequest patched = tryRawBytePatch(request, param, newValue);
+                if (patched != null) return patched;
+                // Fallback: structured Montoya API update
                 HttpParameter replacement = HttpParameter.parameter(
                         param.name(), newValue, param.type());
                 return request.withUpdatedParameters(replacement);
@@ -80,6 +101,69 @@ public class ContainerExtractor {
         } else {
             return request.withBody(newValue);
         }
+    }
+
+    /**
+     * Attempts to replace the parameter value in the raw request bytes using the exact
+     * byte offsets reported by {@link ParsedHttpParameter#valueOffsets()}.
+     *
+     * <p>For URL and BODY parameters the new value is URL-encoded before splicing so that
+     * the raw bytes remain syntactically valid. COOKIE and other parameter types use the
+     * value as-is, matching typical cookie header formatting.
+     *
+     * <p>The reconstructed request is built from the modified byte array via
+     * {@link HttpRequest#httpRequest(HttpService, ByteArray)}, which preserves all headers
+     * and other request content exactly.
+     *
+     * @return the patched request, or {@code null} if raw-byte patching is not possible
+     *         (e.g., Burp runtime not available, offset out of range, or any other error)
+     */
+    HttpRequest tryRawBytePatch(HttpRequest request, ParsedHttpParameter param, String newValue) {
+        try {
+            Range valueRange = param.valueOffsets();
+            ByteArray rawBytes = request.toByteArray();
+            int start = valueRange.startIndexInclusive();
+            int end   = valueRange.endIndexExclusive();
+            if (start < 0 || end < start || end > rawBytes.length()) {
+                return null;
+            }
+
+            String encodedValue = encodeForRawBytes(newValue, param.type());
+            ByteArray prefix    = rawBytes.subArray(0, start);
+            ByteArray suffix    = rawBytes.subArray(end, rawBytes.length());
+            ByteArray newBytes  = ByteArray.byteArray(encodedValue);
+            ByteArray modified  = prefix.withAppended(newBytes).withAppended(suffix);
+
+            HttpService service = request.httpService();
+            return service != null
+                    ? HttpRequest.httpRequest(service, modified)
+                    : HttpRequest.httpRequest(modified);
+        } catch (Exception e) {
+            LOG.log(Level.FINE,
+                    "Raw-byte patch failed for parameter ''{0}'', falling back to "
+                    + "withUpdatedParameters: {1}",
+                    new Object[]{param.name(), e.getMessage()});
+            return null;
+        }
+    }
+
+    /**
+     * Encodes {@code value} in the format expected by the raw HTTP request bytes for the
+     * given parameter type.
+     *
+     * <ul>
+     *   <li>{@link HttpParameterType#URL} and {@link HttpParameterType#BODY}: percent-encodes
+     *       special characters using application/x-www-form-urlencoded rules (spaces as
+     *       {@code +}, other specials as {@code %xx}).</li>
+     *   <li>All other types (e.g., {@link HttpParameterType#COOKIE}): returned as-is,
+     *       since cookie values are not URL-encoded in HTTP/1.1 headers.</li>
+     * </ul>
+     */
+    static String encodeForRawBytes(String value, HttpParameterType type) {
+        if (type == HttpParameterType.URL || type == HttpParameterType.BODY) {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        }
+        return value;
     }
 
     // --- private helpers ---

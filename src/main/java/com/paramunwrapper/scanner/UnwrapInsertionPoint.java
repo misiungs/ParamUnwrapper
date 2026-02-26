@@ -87,12 +87,74 @@ public class UnwrapInsertionPoint implements AuditInsertionPoint {
 
     @Override
     public String baseValue() {
-        return currentValue != null ? currentValue : "";
+        try {
+            CodecChain chain = new CodecChain(rule.getCodecChain());
+            String rawContainer = extractor.extractRawContainer(baseRequest);
+            if (rawContainer == null) {
+                return cachedValue();
+            }
+            if (candidateType == CandidateType.WHOLE_BODY) {
+                return chain.decode(rawContainer);
+            }
+            String decoded = chain.decode(rawContainer);
+            if (rule.getParserType() == ParserType.CUSTOM) {
+                if (customPattern == null) {
+                    return cachedValue();
+                }
+                Matcher m = customPattern.matcher(decoded);
+                if (!m.find()) return cachedValue();
+                try {
+                    String v = m.group("value");
+                    return v != null ? v : cachedValue();
+                } catch (IllegalArgumentException ex) {
+                    return cachedValue();
+                }
+            }
+            ContentParser parser = ContentParserFactory.create(rule.getParserType());
+            parser.parse(decoded);
+            String value = parser.getValue(fieldIdentifier);
+            return value != null ? value : cachedValue();
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "baseValue recomputation failed for '" + name()
+                    + "': " + e.getMessage());
+            return cachedValue();
+        }
     }
 
     @Override
     public List<Range> issueHighlights(ByteArray payload) {
+        try {
+            int idx = findPayloadOffset(payload);
+            if (idx >= 0) {
+                return List.of(Range.range(idx, idx + payload.length()));
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "issueHighlights computation failed for '" + name()
+                    + "': " + e.getMessage());
+        }
         return Collections.emptyList();
+    }
+
+    /**
+     * Builds the request with the given payload and returns the byte offset of
+     * {@code payload} within the raw request bytes, or {@code -1} if the payload
+     * cannot be located (build failed, payload not found, or any error).
+     *
+     * <p>Package-visible to allow unit tests to verify the index-finding logic
+     * independently of the Montoya {@link Range} factory.
+     */
+    int findPayloadOffset(ByteArray payload) {
+        try {
+            HttpRequest built = buildHttpRequestWithPayload(payload);
+            if (built == null) return -1;
+            String payloadStr = payload.toString();
+            if (payloadStr == null || payloadStr.isEmpty()) return -1;
+            return built.toByteArray().indexOf(payloadStr);
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "findPayloadOffset failed for '" + name()
+                    + "': " + e.getMessage());
+            return -1;
+        }
     }
 
     @Override
@@ -168,5 +230,10 @@ public class UnwrapInsertionPoint implements AuditInsertionPoint {
                     + e.getMessage(), e);
             return null;
         }
+    }
+
+    /** Returns the cached {@code currentValue} captured at construction, or {@code ""} if null. */
+    private String cachedValue() {
+        return currentValue != null ? currentValue : "";
     }
 }
