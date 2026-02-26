@@ -6,6 +6,7 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.ui.Selection;
 import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpRequestEditor;
 import com.paramunwrapper.codec.CodecChain;
+import com.paramunwrapper.model.ParserType;
 import com.paramunwrapper.model.UnwrapRule;
 import com.paramunwrapper.parser.ContentParser;
 import com.paramunwrapper.parser.ContentParserFactory;
@@ -16,12 +17,18 @@ import java.awt.*;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * A message editor tab that shows which rule matched a request, displays the decoded
  * container content, and lists all detected inner parameters with their current values.
  */
 public class UnwrapEditorTab implements ExtensionProvidedHttpRequestEditor {
+
+    private static final Logger LOG = Logger.getLogger(UnwrapEditorTab.class.getName());
 
     private final List<UnwrapRule> rules;
     private final JPanel panel;
@@ -114,11 +121,19 @@ public class UnwrapEditorTab implements ExtensionProvidedHttpRequestEditor {
 
                 CodecChain chain = new CodecChain(rule.getCodecChain());
                 String decoded = chain.decode(raw);
+                if (decoded == null || decoded.isBlank()) continue;
+
+                if (rule.getParserType() == ParserType.CUSTOM) {
+                    // CUSTOM rules match based on a non-blank decoded container;
+                    // no ContentParser is needed (and CUSTOM is intentionally unsupported).
+                    return Optional.of(rule);
+                }
 
                 ContentParser parser = ContentParserFactory.create(rule.getParserType());
                 parser.parse(decoded);
                 return Optional.of(rule);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                LOG.fine(() -> "Rule '" + rule.getName() + "' did not match: " + e.getMessage());
             }
         }
         return Optional.empty();
@@ -144,6 +159,14 @@ public class UnwrapEditorTab implements ExtensionProvidedHttpRequestEditor {
                 CodecChain chain = new CodecChain(rule.getCodecChain());
                 String decoded = chain.decode(raw);
 
+                if (rule.getParserType() == ParserType.CUSTOM) {
+                    decodedContentArea.setText(decoded);
+                    decodedContentArea.setCaretPosition(0);
+                    parametersArea.setText(resolveCustomParameters(rule, decoded));
+                    parametersArea.setCaretPosition(0);
+                    return;
+                }
+
                 ContentParser parser = ContentParserFactory.create(rule.getParserType());
                 parser.parse(decoded);
 
@@ -163,4 +186,42 @@ public class UnwrapEditorTab implements ExtensionProvidedHttpRequestEditor {
             }
         });
     }
+
+    /**
+     * Resolves the "Detected inner parameters" text for a CUSTOM rule by applying each
+     * include-list regex pattern against the decoded content and extracting the named
+     * capture group {@code (?<value>...)}.  Mirrors the non-blocking variant of the logic
+     * in {@code RulesTab.runLoadList()}.
+     */
+    private String resolveCustomParameters(UnwrapRule rule, String decoded) {
+        List<String> includeList = rule.getIncludeList();
+        if (includeList == null || includeList.isEmpty()) {
+            return "No include-list regex matches";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        boolean anyMatch = false;
+        for (String pattern : includeList) {
+            try {
+                Pattern compiled = Pattern.compile(pattern);
+                Matcher m = compiled.matcher(decoded);
+                if (!m.find()) continue;
+                String captured;
+                try {
+                    captured = m.group("value");
+                } catch (IllegalArgumentException ex) {
+                    LOG.fine(() -> "Regex does not contain named capture group (?<value>...): " + pattern);
+                    continue;
+                }
+                if (captured == null) continue;
+                sb.append("regex:").append(pattern).append(" = ").append(captured).append("\n");
+                anyMatch = true;
+            } catch (PatternSyntaxException ex) {
+                LOG.fine(() -> "Invalid regex pattern: " + pattern + " - " + ex.getMessage());
+            }
+        }
+
+        return anyMatch ? sb.toString() : "No include-list regex matches";
+    }
 }
+
