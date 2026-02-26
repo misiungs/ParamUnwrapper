@@ -4,11 +4,14 @@ import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.core.Range;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import com.paramunwrapper.model.CandidateType;
+import com.paramunwrapper.model.CodecStepType;
 import com.paramunwrapper.model.ParserType;
 import com.paramunwrapper.model.UnwrapRule;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -211,6 +214,42 @@ class UnwrapInsertionPointTest {
 
         int offset = ip.findPayloadOffset(stubByteArray("<payload>"));
         assertEquals(-1, offset);
+    }
+
+    @Test
+    void findPayloadOffsetFindsUrlEncodedPayloadForCustomRuleWithUrlDecodeChain() {
+        // When the codec chain URL-encodes the container, the payload appears in its
+        // URL-encoded form inside the built request.  findPayloadOffset must fall back
+        // to searching for the re-encoded payload so issueHighlights can point Burp
+        // Scanner at the right location for reflected-XSS detection.
+        final String payloadStr = "<script>";
+        final String urlEncodedPayload = URLEncoder.encode(payloadStr, StandardCharsets.UTF_8);
+
+        // Pre-build the "built request" that would result from encoding the modified container.
+        // container: magicFunction(hello)  →  after payload replace: magicFunction(<script>)
+        // URL-encoded:  magicFunction%28<urlEncodedPayload>%29
+        final String builtRequestBody = "magicFunction%28" + urlEncodedPayload + "%29";
+
+        UnwrapRule rule = new UnwrapRule("custom-url");
+        rule.setParserType(ParserType.CUSTOM);
+        rule.setCodecChain(List.of(CodecStepType.URL_DECODE));
+
+        ContainerExtractor extractor = new ContainerExtractor(false, null);
+
+        // Base request body is the URL-encoded container "magicFunction%28hello%29"
+        HttpRequest builtRequest = stubRequestWithRawBytes(builtRequestBody);
+        HttpRequest baseRequest = stubRequestReturningBuiltOnWithBody(
+                "magicFunction%28hello%29", builtRequest);
+
+        UnwrapInsertionPoint ip = new UnwrapInsertionPoint(
+                rule, CandidateType.VALUE, "regex:magicFunction\\((?<value>[^)]+)\\)",
+                baseRequest, "hello", extractor);
+
+        int offset = ip.findPayloadOffset(stubByteArray(payloadStr));
+        int expectedOffset = builtRequestBody.indexOf(urlEncodedPayload);
+        assertTrue(expectedOffset >= 0, "pre-condition: encoded payload must be in built body");
+        assertEquals(expectedOffset, offset,
+                "findPayloadOffset should locate the URL-encoded payload when literal search fails");
     }
 
     // -----------------------------------------------------------------------
