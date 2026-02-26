@@ -149,7 +149,31 @@ public class UnwrapInsertionPoint implements AuditInsertionPoint {
             if (built == null) return -1;
             String payloadStr = payload.toString();
             if (payloadStr == null || payloadStr.isEmpty()) return -1;
-            return built.toByteArray().indexOf(payloadStr);
+
+            ByteArray requestBytes = built.toByteArray();
+
+            // First try: literal (unencoded) payload
+            int idx = requestBytes.indexOf(payloadStr);
+            if (idx >= 0) return idx;
+
+            // Second try: the codec chain re-encodes the modified container, so the payload may
+            // appear in encoded form (e.g. URL-encoded when the chain contains URL_DECODE).
+            // Encode the payload alone and search for that encoded form.
+            try {
+                CodecChain chain = new CodecChain(rule.getCodecChain());
+                if (!chain.isEmpty()) {
+                    String encodedPayload = chain.encode(payloadStr);
+                    if (!encodedPayload.equals(payloadStr)) {
+                        idx = requestBytes.indexOf(encodedPayload);
+                        if (idx >= 0) return idx;
+                    }
+                }
+            } catch (Exception ignored) {
+                    LOG.log(Level.FINE, "findPayloadOffset: re-encoded payload search failed for '"
+                            + name() + "': " + ignored.getMessage());
+                }
+
+            return -1;
         } catch (Exception e) {
             LOG.log(Level.FINE, "findPayloadOffset failed for '" + name()
                     + "': " + e.getMessage());
