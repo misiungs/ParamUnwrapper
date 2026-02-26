@@ -217,6 +217,11 @@ public class RuleEditorPanel extends JPanel {
         return currentRule;
     }
 
+    /** Returns the current text in the rule name field. */
+    public String getNameFieldText() {
+        return nameField.getText();
+    }
+
     private void updateIncludeListLabel(ParserType parserType) {
         if (parserType == ParserType.CUSTOM) {
             includeListBorder.setTitle(

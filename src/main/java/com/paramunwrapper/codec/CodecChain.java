@@ -58,6 +58,8 @@ public class CodecChain {
         return switch (type) {
             case URL_DECODE, URL_ENCODE -> new UrlCodec();
             case BASE64_DECODE, BASE64_ENCODE -> new Base64Codec();
+            case HTML_ENTITY_DECODE, HTML_ENTITY_ENCODE -> new HtmlEntityCodec();
+            case UNICODE_ESCAPE_DECODE, UNICODE_ESCAPE_ENCODE -> new UnicodeEscapeCodec();
         };
     }
 }

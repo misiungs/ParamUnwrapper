@@ -183,7 +183,9 @@ public class RulesTab extends JPanel {
         });
 
         addBtn.addActionListener(e -> {
-            UnwrapRule newRule = new UnwrapRule("Rule " + (rules.size() + 1));
+            String typedName = editorPanel.getNameFieldText().trim();
+            String name = typedName.isEmpty() ? "Rule " + (rules.size() + 1) : typedName;
+            UnwrapRule newRule = new UnwrapRule(name);
             rules.add(newRule);
             listModel.addElement(newRule);
             ruleList.setSelectedValue(newRule, true);
