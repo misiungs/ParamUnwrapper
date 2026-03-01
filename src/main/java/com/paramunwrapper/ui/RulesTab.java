@@ -161,13 +161,14 @@ public class RulesTab extends JPanel {
         JScrollPane leftScroll = new JScrollPane(leftStack,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
                 JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        leftScroll.setPreferredSize(new Dimension(380, 0));
 
         // ------------------------------------------------------------------ split
         JSplitPane splitPane = new JSplitPane(
                 JSplitPane.HORIZONTAL_SPLIT, leftScroll, rightPanel);
-        splitPane.setDividerLocation(380);
-        splitPane.setResizeWeight(0.35);
+        splitPane.setResizeWeight(0.5);
+        // Set the divider to the centre after the component is laid out so the
+        // position is calculated relative to the actual window width.
+        SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(0.5));
         add(splitPane, BorderLayout.CENTER);
 
         // ------------------------------------------------------------------ listeners
