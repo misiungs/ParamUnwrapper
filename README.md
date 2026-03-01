@@ -92,19 +92,20 @@ You can chain them, for example:
 - URL Decode → Base64 Decode  
   (useful when the Base64 text itself is URL-encoded inside a parameter)
 
-### 4 — Parse and build a profile (Parse / Clear / Delete behavior)
+4 — Parse and build a profile (Parse / Load list / Clear / Delete behavior)
 
-#### Parse (what it does)
+## Parse (automatic discovery)
 
 With a request loaded and a rule selected, click "Parse".
 
-The extension:
-1. Extracts the container (parameter value or body).
-2. Decodes it via the codec chain.
-3. Parses the decoded content.
-4. Populates the "Insertion points" table with up to 1,024 entries.
+"Parse" automatically searches the decoded container for injection points. The extension:
 
-Insertion points types:
+- Extracts the container (parameter value or body)
+- Decodes it via the codec chain
+- Parses the decoded content
+- Populates the "Insertion points" table with up to 1024 entries
+
+### Insertion point types
 
 | Insertion points type | Description |
 |---|---|
@@ -112,28 +113,42 @@ Insertion points types:
 | Key rename | An object/form key; payload becomes the new key name |
 | Whole body | The entire decoded container; payload replaces it entirely |
 
-#### Insertion points table (auto-saved)
+## Load list (manual include list)
 
-The Insertion points table is automatically saved on every change (selection, edits, add/remove entries).  
+If you prefer not to auto-discover candidates, you can build a manual "Include list" and click "Load list".
+
+"Load list" populates the "Insertion points" table only from the items currently in the Include list. It does not run automatic discovery.
+
+Typical uses:
+
+- You already know the exact fields/paths you want to target
+- You want a minimal, deterministic set of insertion points
+- You want to avoid “extra” candidates found by parsing
+
+## Insertion points table (auto-saved)
+
+The "Insertion points" table is automatically saved on every change (selection, edits, add/remove entries).
 
 You can:
+
 - Use the "✓ checkbox" to include/exclude candidates
 - Edit an "Identifier" cell directly (e.g. adjust a JSON Pointer, key name, etc.)
 - Use "Add entry" to add candidates manually
 
-#### Clear button
+## Clear button
 
-"Clear" button resets the current parse results in the UI (i.e., the Candidates/profile view) so you can start fresh.
+"Clear" resets the current parse/list results in the UI (i.e., the Candidates/profile view) so you can start fresh.
 
 Typical uses:
-- You changed the rule configuration and want to re-parse cleanly
+
+- You changed the rule configuration and want to rebuild the profile cleanly
 - You loaded a new request and don’t want to keep prior candidates visible
 
-#### Delete button
+## Delete button
 
-"Delete" button removes the currently selected rule (and its associated stored candidates/profile) from the rules list.
+"Delete" removes the currently selected rule (and its associated stored candidates/profile) from the rules list.
 
-> If you want to keep a rule but temporarily ignore it, use "Enabled" instead of deleting.
+- If you want to keep a rule but temporarily ignore it, use "Enabled" instead of deleting.
 
 ### 5 — Active scanning
 
