@@ -56,6 +56,10 @@ public class ParamUnwrapperExtension implements BurpExtension {
         api.userInterface().registerHttpRequestEditorProvider(
                 new UnwrapEditorProvider(rules));
 
+        // Unloading handler – logs on unload and provides a hook for future cleanup
+        api.extension().registerUnloadingHandler(() ->
+                api.logging().logToOutput("Param Unwrapper unloaded."));
+
         api.logging().logToOutput("Param Unwrapper loaded successfully.");
     }
 }
